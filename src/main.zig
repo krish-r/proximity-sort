@@ -71,7 +71,7 @@ pub fn main() !void {
     }
 
     // print error + help and exit if the path is not provided.
-    if (path == null) {
+    if (path == null or path.?.len == 0) {
         std.debug.print("<PATH> cannot be empty.\n\n", .{});
         try stdout.writeAll(usage_text);
         std.process.exit(1);
@@ -108,17 +108,18 @@ fn sort(allocator: std.mem.Allocator, input: std.ArrayList([]const u8), path: []
         // skip empty input
         if (item.len == 0) continue;
 
+        var proximity: i32 = 0;
         var missed = false;
 
-        // ignore final separator
-        var input_it = std.mem.splitScalar(u8, if (item[item.len - 1] == sep)
-            item[0 .. item.len - 1]
-        else
-            item, sep);
+        var input_it = std.mem.tokenizeScalar(u8, item, sep);
+        var path_it = std.mem.tokenizeScalar(u8, path, sep);
 
-        var path_it = std.mem.splitScalar(u8, path, sep);
+        // check for root component
+        if ((@intFromBool(item[0] == sep) ^ @intFromBool(path[0] == sep)) != 0) {
+            missed = true;
+            proximity -= 1;
+        }
 
-        var proximity: i32 = 0;
         while (input_it.next()) |input_segment| {
             // skip current dir (".") segment in input
             if (std.mem.eql(u8, input_segment, ".")) continue;
@@ -154,8 +155,8 @@ fn sort(allocator: std.mem.Allocator, input: std.ArrayList([]const u8), path: []
     }
 
     var sorted = try std.ArrayList([]const u8).initCapacity(allocator, data.count());
-    while (data.removeOrNull()) |line| {
-        try sorted.append(line.path);
+    while (data.removeOrNull()) |item| {
+        try sorted.append(item.path);
     }
 
     return sorted;
@@ -281,4 +282,67 @@ test "check if same proximity is sorted" {
     try std.testing.expectEqual("a/1.txt", sorted.items[3]);
     try std.testing.expectEqual("a/x/2.txt", sorted.items[4]);
     try std.testing.expectEqual("a/x/1.txt", sorted.items[5]);
+}
+
+test "check if extra separators in input are ignored" {
+    const allocator = std.testing.allocator;
+    var list = std.ArrayList([]const u8).init(allocator);
+    defer list.deinit();
+
+    try list.appendSlice(&[_][]const u8{
+        "test.txt",
+        "bar//test.txt",
+        "bar//main.txt",
+        "misc/test.txt",
+    });
+
+    var sorted = try sort(allocator, list, "bar/main.txt");
+    defer sorted.deinit();
+
+    try std.testing.expectEqual("bar//main.txt", sorted.items[0]);
+    try std.testing.expectEqual("bar//test.txt", sorted.items[1]);
+    try std.testing.expectEqual("test.txt", sorted.items[2]);
+    try std.testing.expectEqual("misc/test.txt", sorted.items[3]);
+}
+
+test "check if extra separators in path are ignored" {
+    const allocator = std.testing.allocator;
+    var list = std.ArrayList([]const u8).init(allocator);
+    defer list.deinit();
+
+    try list.appendSlice(&[_][]const u8{
+        "test.txt",
+        "bar/test.txt",
+        "bar/main.txt",
+        "misc/test.txt",
+    });
+
+    var sorted = try sort(allocator, list, "bar//main.txt");
+    defer sorted.deinit();
+
+    try std.testing.expectEqual("bar/main.txt", sorted.items[0]);
+    try std.testing.expectEqual("bar/test.txt", sorted.items[1]);
+    try std.testing.expectEqual("test.txt", sorted.items[2]);
+    try std.testing.expectEqual("misc/test.txt", sorted.items[3]);
+}
+
+test "check if root is considered" {
+    const allocator = std.testing.allocator;
+    var list = std.ArrayList([]const u8).init(allocator);
+    defer list.deinit();
+
+    try list.appendSlice(&[_][]const u8{
+        "/tmp/test.txt",
+        "tmp/main.txt",
+        "bar/test.txt",
+        "misc/test.txt",
+    });
+
+    var sorted = try sort(allocator, list, "tmp/test.txt");
+    defer sorted.deinit();
+
+    try std.testing.expectEqual("tmp/main.txt", sorted.items[0]);
+    try std.testing.expectEqual("bar/test.txt", sorted.items[1]);
+    try std.testing.expectEqual("misc/test.txt", sorted.items[2]);
+    try std.testing.expectEqual("/tmp/test.txt", sorted.items[3]);
 }
