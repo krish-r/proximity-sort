@@ -1,4 +1,5 @@
 const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
 
 const usage_text =
     \\Usage: proximity-sort [OPTIONS] <PATH>
@@ -31,7 +32,7 @@ const Data = struct {
 };
 
 pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
@@ -81,14 +82,14 @@ pub fn main() !void {
     defer arena.free(stdin_contents);
     var stdin_it = std.mem.splitScalar(u8, stdin_contents, in_sep);
 
-    var input = std.ArrayList([]const u8).init(arena);
-    defer input.deinit();
+    var input: ArrayList([]const u8) = .empty;
+    defer input.deinit(arena);
     while (stdin_it.next()) |item| {
-        try input.append(item);
+        try input.append(arena, item);
     }
 
     var sorted = try sort(arena, input, path.?);
-    defer sorted.deinit();
+    defer sorted.deinit(arena);
 
     for (sorted.items) |item| {
         try stdout_w.writeAll(item);
@@ -98,10 +99,10 @@ pub fn main() !void {
     try stdout_bw.flush();
 }
 
-fn sort(allocator: std.mem.Allocator, input: std.ArrayList([]const u8), path: []const u8) !std.ArrayList([]const u8) {
+fn sort(allocator: std.mem.Allocator, input: ArrayList([]const u8), path: []const u8) !ArrayList([]const u8) {
     const sep = std.fs.path.sep;
 
-    var data = std.PriorityQueue(Data, void, Data.compare).init(allocator, {});
+    var data: std.PriorityQueue(Data, void, Data.compare) = .init(allocator, {});
     defer data.deinit();
 
     for (input.items, 0..) |item, i| {
@@ -154,9 +155,9 @@ fn sort(allocator: std.mem.Allocator, input: std.ArrayList([]const u8), path: []
         });
     }
 
-    var sorted = try std.ArrayList([]const u8).initCapacity(allocator, data.count());
+    var sorted: ArrayList([]const u8) = try .initCapacity(allocator, data.count());
     while (data.removeOrNull()) |item| {
-        try sorted.append(item.path);
+        sorted.appendAssumeCapacity(item.path);
     }
 
     return sorted;
@@ -164,10 +165,10 @@ fn sort(allocator: std.mem.Allocator, input: std.ArrayList([]const u8), path: []
 
 test "check sort - 1" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "test.txt",
         "bar/test.txt",
         "bar/main.txt",
@@ -175,7 +176,7 @@ test "check sort - 1" {
     });
 
     var sorted = try sort(allocator, list, "bar/main.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("bar/main.txt", sorted.items[0]);
     try std.testing.expectEqual("bar/test.txt", sorted.items[1]);
@@ -183,10 +184,10 @@ test "check sort - 1" {
 
 test "check sort - 2" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "baz/controller/admin.rb",
         "foobar/controller/user.rb",
         "baz/views/admin.rb",
@@ -195,7 +196,7 @@ test "check sort - 2" {
     });
 
     var sorted = try sort(allocator, list, "foobar/controller/admin.rb");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("foobar/controller/admin.rb", sorted.items[0]);
     try std.testing.expectEqual("foobar/controller/user.rb", sorted.items[1]);
@@ -204,17 +205,17 @@ test "check sort - 2" {
 
 test "check if root is closer" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "a/foo.txt",
         "b/foo.txt",
         "foo.txt",
     });
 
     var sorted = try sort(allocator, list, "a/null.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("a/foo.txt", sorted.items[0]);
     try std.testing.expectEqual("foo.txt", sorted.items[1]);
@@ -223,17 +224,17 @@ test "check if root is closer" {
 
 test "check if sort is stable" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "c.txt",
         "b.txt",
         "a.txt",
     });
 
     var sorted = try sort(allocator, list, "null.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("c.txt", sorted.items[0]);
     try std.testing.expectEqual("b.txt", sorted.items[1]);
@@ -242,17 +243,17 @@ test "check if sort is stable" {
 
 test "check if current dir is ignored" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "./first.txt",
         "././second.txt",
         "third.txt",
     });
 
     var sorted = try sort(allocator, list, "null.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("./first.txt", sorted.items[0]);
     try std.testing.expectEqual("././second.txt", sorted.items[1]);
@@ -261,10 +262,10 @@ test "check if current dir is ignored" {
 
 test "check if same proximity is sorted" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "b/2.txt",
         "b/1.txt",
         "a/x/2.txt",
@@ -274,7 +275,7 @@ test "check if same proximity is sorted" {
     });
 
     var sorted = try sort(allocator, list, "null.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("b/2.txt", sorted.items[0]);
     try std.testing.expectEqual("b/1.txt", sorted.items[1]);
@@ -286,10 +287,10 @@ test "check if same proximity is sorted" {
 
 test "check if extra separators in input are ignored" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "test.txt",
         "bar//test.txt",
         "bar//main.txt",
@@ -297,7 +298,7 @@ test "check if extra separators in input are ignored" {
     });
 
     var sorted = try sort(allocator, list, "bar/main.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("bar//main.txt", sorted.items[0]);
     try std.testing.expectEqual("bar//test.txt", sorted.items[1]);
@@ -307,10 +308,10 @@ test "check if extra separators in input are ignored" {
 
 test "check if extra separators in path are ignored" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "test.txt",
         "bar/test.txt",
         "bar/main.txt",
@@ -318,7 +319,7 @@ test "check if extra separators in path are ignored" {
     });
 
     var sorted = try sort(allocator, list, "bar//main.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("bar/main.txt", sorted.items[0]);
     try std.testing.expectEqual("bar/test.txt", sorted.items[1]);
@@ -328,10 +329,10 @@ test "check if extra separators in path are ignored" {
 
 test "check if root is considered" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList([]const u8).init(allocator);
-    defer list.deinit();
+    var list: ArrayList([]const u8) = .empty;
+    defer list.deinit(allocator);
 
-    try list.appendSlice(&[_][]const u8{
+    try list.appendSlice(allocator, &[_][]const u8{
         "/tmp/test.txt",
         "tmp/main.txt",
         "bar/test.txt",
@@ -339,7 +340,7 @@ test "check if root is considered" {
     });
 
     var sorted = try sort(allocator, list, "tmp/test.txt");
-    defer sorted.deinit();
+    defer sorted.deinit(allocator);
 
     try std.testing.expectEqual("tmp/main.txt", sorted.items[0]);
     try std.testing.expectEqual("bar/test.txt", sorted.items[1]);
