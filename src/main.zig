@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const ArrayList = std.ArrayListUnmanaged;
 
 const usage_text =
@@ -32,9 +33,15 @@ const Data = struct {
 };
 
 pub fn main() !void {
-    var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+
+    const allocator, const is_arena = switch (builtin.mode) {
+        .Debug, .ReleaseSafe => .{ arena_allocator.allocator(), true },
+        .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
+    };
+    defer if (is_arena) {
+        arena_allocator.deinit();
+    };
 
     const stdin = std.io.getStdIn().reader();
     var stdin_br = std.io.bufferedReader(stdin);
@@ -49,8 +56,8 @@ pub fn main() !void {
     var in_sep: u8 = '\n';
     var path: ?[]const u8 = null;
 
-    const args = try std.process.argsAlloc(arena);
-    defer std.process.argsFree(arena, args);
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
     // parse command-line args
     var i: usize = 1;
@@ -78,18 +85,18 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    const stdin_contents = try stdin_r.readAllAlloc(arena, std.math.maxInt(u32));
-    defer arena.free(stdin_contents);
+    const stdin_contents = try stdin_r.readAllAlloc(allocator, std.math.maxInt(u32));
+    defer allocator.free(stdin_contents);
     var stdin_it = std.mem.splitScalar(u8, stdin_contents, in_sep);
 
     var input: ArrayList([]const u8) = .empty;
-    defer input.deinit(arena);
+    defer input.deinit(allocator);
     while (stdin_it.next()) |item| {
-        try input.append(arena, item);
+        try input.append(allocator, item);
     }
 
-    var sorted = try sort(arena, input, path.?);
-    defer sorted.deinit(arena);
+    var sorted = try sort(allocator, input, path.?);
+    defer sorted.deinit(allocator);
 
     for (sorted.items) |item| {
         try stdout_w.writeAll(item);
