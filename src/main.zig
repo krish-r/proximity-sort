@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const ArrayList = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 
 const usage_text =
     \\Usage: proximity-sort [OPTIONS] <PATH>
@@ -34,22 +34,16 @@ const Data = struct {
 
 pub fn main() !void {
     var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    const allocator = arena_allocator.allocator();
+    defer arena_allocator.deinit();
 
-    const allocator, const is_arena = switch (builtin.mode) {
-        .Debug, .ReleaseSafe => .{ arena_allocator.allocator(), true },
-        .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
-    };
-    defer if (is_arena) {
-        arena_allocator.deinit();
-    };
+    var stdin_buf: [1024]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buf);
+    const stdin = &stdin_reader.interface;
 
-    const stdin = std.io.getStdIn().reader();
-    var stdin_br = std.io.bufferedReader(stdin);
-    const stdin_r = stdin_br.reader();
-
-    const stdout = std.io.getStdOut().writer();
-    var stdout_bw = std.io.bufferedWriter(stdout);
-    const stdout_w = stdout_bw.writer();
+    var stdout_buf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    const stdout = &stdout_writer.interface;
 
     // defaults
     var out_sep: u8 = '\n';
@@ -65,6 +59,7 @@ pub fn main() !void {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             try stdout.writeAll(usage_text);
+            try stdout.flush();
             return std.process.cleanExit();
         } else if (std.mem.eql(u8, arg, "--print0")) {
             out_sep = 0x00;
@@ -82,28 +77,30 @@ pub fn main() !void {
     if (path == null or path.?.len == 0) {
         std.debug.print("<PATH> cannot be empty.\n\n", .{});
         try stdout.writeAll(usage_text);
+        try stdout.flush();
         std.process.exit(1);
     }
 
-    const stdin_contents = try stdin_r.readAllAlloc(allocator, std.math.maxInt(u32));
-    defer allocator.free(stdin_contents);
-    var stdin_it = std.mem.splitScalar(u8, stdin_contents, in_sep);
-
     var input: ArrayList([]const u8) = .empty;
     defer input.deinit(allocator);
-    while (stdin_it.next()) |item| {
-        try input.append(allocator, item);
+
+    // TODO: Explore if there are other ways to do this with 0.15.1+
+    while (stdin.takeDelimiterExclusive(in_sep)) |item| {
+        try input.append(allocator, try allocator.dupe(u8, item));
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
     }
 
     var sorted = try sort(allocator, input, path.?);
     defer sorted.deinit(allocator);
 
     for (sorted.items) |item| {
-        try stdout_w.writeAll(item);
-        try stdout_w.writeAll(&[_]u8{out_sep});
+        try stdout.writeAll(item);
+        try stdout.writeAll(&[_]u8{out_sep});
     }
 
-    try stdout_bw.flush();
+    try stdout.flush();
 }
 
 fn sort(allocator: std.mem.Allocator, input: ArrayList([]const u8), path: []const u8) !ArrayList([]const u8) {
