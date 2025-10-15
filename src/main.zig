@@ -84,14 +84,9 @@ pub fn main() !void {
     var input: ArrayList([]const u8) = .empty;
     defer input.deinit(allocator);
 
-    // TODO: Explore if there are other ways to do this with 0.15.1+
-    while (stdin.takeDelimiterExclusive(in_sep)) |item| {
+    while (try stdin.takeDelimiter(in_sep)) |item| {
         try input.append(allocator, try allocator.dupe(u8, item));
-    } else |err| switch (err) {
-        error.EndOfStream => {},
-        else => return err,
     }
-
     var sorted = try sort(allocator, input, path.?);
     defer sorted.deinit(allocator);
 
