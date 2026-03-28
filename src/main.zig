@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ArrayList = std.ArrayList;
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 const usage_text =
     \\Usage: proximity-sort [OPTIONS] <PATH>
@@ -32,17 +34,16 @@ const Data = struct {
     }
 };
 
-pub fn main() !void {
-    var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    const allocator = arena_allocator.allocator();
-    defer arena_allocator.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
 
     var stdin_buf: [1024]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buf);
+    var stdin_reader = Io.File.stdin().readerStreaming(io, &stdin_buf);
     const stdin = &stdin_reader.interface;
 
     var stdout_buf: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
     // defaults
@@ -50,8 +51,7 @@ pub fn main() !void {
     var in_sep: u8 = '\n';
     var path: ?[]const u8 = null;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(arena);
 
     // parse command-line args
     var i: usize = 1;
@@ -60,7 +60,7 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             try stdout.writeAll(usage_text);
             try stdout.flush();
-            return std.process.cleanExit();
+            return std.process.cleanExit(io);
         } else if (std.mem.eql(u8, arg, "--print0")) {
             out_sep = 0x00;
         } else if (std.mem.eql(u8, arg, "-0") or std.mem.eql(u8, arg, "--read0")) {
@@ -82,13 +82,13 @@ pub fn main() !void {
     }
 
     var input: ArrayList([]const u8) = .empty;
-    defer input.deinit(allocator);
+    defer input.deinit(arena);
 
     while (try stdin.takeDelimiter(in_sep)) |item| {
-        try input.append(allocator, try allocator.dupe(u8, item));
+        try input.append(arena, try arena.dupe(u8, item));
     }
-    var sorted = try sort(allocator, input, path.?);
-    defer sorted.deinit(allocator);
+    var sorted = try sort(arena, input, path.?);
+    defer sorted.deinit(arena);
 
     for (sorted.items) |item| {
         try stdout.writeAll(item);
@@ -98,11 +98,11 @@ pub fn main() !void {
     try stdout.flush();
 }
 
-fn sort(allocator: std.mem.Allocator, input: ArrayList([]const u8), path: []const u8) !ArrayList([]const u8) {
+fn sort(arena: Allocator, input: ArrayList([]const u8), path: []const u8) !ArrayList([]const u8) {
     const sep = std.fs.path.sep;
 
-    var data: std.PriorityQueue(Data, void, Data.compare) = .init(allocator, {});
-    defer data.deinit();
+    var data: std.PriorityQueue(Data, void, Data.compare) = .initContext({});
+    defer data.deinit(arena);
 
     for (input.items, 0..) |item, i| {
         // skip empty input
@@ -147,15 +147,15 @@ fn sort(allocator: std.mem.Allocator, input: ArrayList([]const u8), path: []cons
             proximity -= 1;
         }
 
-        try data.add(.{
+        try data.push(arena, .{
             .path = item,
             .score = proximity,
             .index = i,
         });
     }
 
-    var sorted: ArrayList([]const u8) = try .initCapacity(allocator, data.count());
-    while (data.removeOrNull()) |item| {
+    var sorted: ArrayList([]const u8) = try .initCapacity(arena, data.count());
+    while (data.pop()) |item| {
         sorted.appendAssumeCapacity(item.path);
     }
 
